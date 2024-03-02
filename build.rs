@@ -30,4 +30,3 @@ fn main() {
         .write_to_file(out_path.join("sqlite3ext.rs"))
         .expect("Couldn't write bindings!");
 }
-
