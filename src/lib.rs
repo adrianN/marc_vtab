@@ -48,6 +48,13 @@ pub unsafe extern "C" fn myvtabConnect(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn myvtabDisconnect(pVtab : *mut sqlite3_vtab) -> ::std::os::raw::c_int {
+	let pMyVtab = pVtab as *mut myvtab_vtab;
+	sqlite3_free(pMyVtab as *mut ::std::os::raw::c_void);
+	return SQLITE_OK as ::std::os::raw::c_int;
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sqlite3_extension_init(
     db: *mut sqlite3,
     pzErrMsg: *mut *mut ::std::os::raw::c_char,
