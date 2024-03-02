@@ -55,6 +55,18 @@ pub unsafe extern "C" fn myvtabDisconnect(pVtab : *mut sqlite3_vtab) -> ::std::o
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn myvtabOpen(p : *mut sqlite3_vtab, ppCursor : *mut *mut sqlite3_vtab_cursor) -> std::os::raw::c_int {
+	let pCur = sqlite3_malloc(std::mem::size_of::<myvtab_cursor>() as i32) as *mut myvtab_cursor;
+	if pCur == std::ptr::null_mut() {return SQLITE_NOMEM as i32};
+	let newCur = myvtab_cursor {base : sqlite3_vtab_cursor {pVtab : p}, iRowId : 0 };
+	std::ptr::write(pCur, newCur);
+	*ppCursor = &mut ((*pCur).base);
+	return SQLITE_OK as i32;
+}
+	
+	
+
+#[no_mangle]
 pub unsafe extern "C" fn sqlite3_extension_init(
     db: *mut sqlite3,
     pzErrMsg: *mut *mut ::std::os::raw::c_char,
