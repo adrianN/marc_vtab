@@ -28,9 +28,9 @@ pub unsafe extern "C" fn myvtabConnect(
     _pzErr: *mut *mut ::std::os::raw::c_char,
 ) -> ::std::os::raw::c_int {
     let s = std::ffi::CString::new("CREATE TABLE x(a,b)").expect("Can't alloc string");
-    let rc = sqlite3_declare_vtab(db, s.as_ptr());
+    let rc = ((*sqlite3_api).declare_vtab).unwrap()(db, s.as_ptr());
     if rc == SQLITE_OK as i32 {
-        let pvTab = sqlite3_malloc(std::mem::size_of::<myvtab_vtab>() as i32) as *mut myvtab_vtab;
+        let pvTab = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_vtab>() as i32) as *mut myvtab_vtab;
         *ppVtab = pvTab as *mut sqlite3_vtab;
         if pvTab == std::ptr::null_mut() {
             return SQLITE_NOMEM as i32;
@@ -50,7 +50,7 @@ pub unsafe extern "C" fn myvtabConnect(
 #[no_mangle]
 pub unsafe extern "C" fn myvtabDisconnect(pVtab: *mut sqlite3_vtab) -> ::std::os::raw::c_int {
     let pMyVtab = pVtab as *mut myvtab_vtab;
-    sqlite3_free(pMyVtab as *mut ::std::os::raw::c_void);
+    ((*sqlite3_api).free).unwrap()(pMyVtab as *mut ::std::os::raw::c_void);
     return SQLITE_OK as ::std::os::raw::c_int;
 }
 
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn myvtabOpen(
     p: *mut sqlite3_vtab,
     ppCursor: *mut *mut sqlite3_vtab_cursor,
 ) -> std::os::raw::c_int {
-    let pCur = sqlite3_malloc(std::mem::size_of::<myvtab_cursor>() as i32) as *mut myvtab_cursor;
+    let pCur = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_cursor>() as i32) as *mut myvtab_cursor;
     if pCur == std::ptr::null_mut() {
         return SQLITE_NOMEM as i32;
     };
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn myvtabOpen(
 
 #[no_mangle]
 pub unsafe extern "C" fn myvtabClose(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
-    sqlite3_free(cur as *mut ::std::os::raw::c_void);
+    ((*sqlite3_api).free).unwrap()(cur as *mut ::std::os::raw::c_void);
     return SQLITE_OK as i32;
 }
 
@@ -93,9 +93,9 @@ pub unsafe extern "C" fn myvtabColumn(
 ) -> ::std::os::raw::c_int {
     let pCur = cur as *mut myvtab_cursor;
     if i == 0 {
-        sqlite3_result_int(ctx, 1000 + (*pCur).iRowId);
+        ((*sqlite3_api).result_int).unwrap()(ctx, 1000 + (*pCur).iRowId);
     } else {
-        sqlite3_result_int(ctx, 2000 + (*pCur).iRowId);
+        ((*sqlite3_api).result_int).unwrap()(ctx, 2000 + (*pCur).iRowId);
     }
     return SQLITE_OK as i32;
 }
@@ -179,6 +179,6 @@ pub unsafe extern "C" fn sqlite3_extension_init(
 ) -> ::std::os::raw::c_int {
     sqlite3_api = pApi;
     let s = std::ffi::CString::new("myvtab").expect("Can't alloc string");
-    let rc = sqlite3_create_module(db, s.as_ptr(), &myvtabModule, std::ptr::null_mut());
+    let rc = (*sqlite3_api).create_module.unwrap()(db, s.as_ptr(), &myvtabModule, std::ptr::null_mut());
     return rc as ::std::os::raw::c_int;
 }
