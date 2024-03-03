@@ -4,8 +4,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/sqlite3ext.rs"));
 
-#[no_mangle]
-pub static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
+static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
 
 #[repr(C)]
 struct myvtab_vtab {
@@ -18,8 +17,7 @@ struct myvtab_cursor {
     iRowId: i32,
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabConnect(
+unsafe extern "C" fn myvtabConnect(
     db: *mut sqlite3,
     _pAux: *mut ::std::os::raw::c_void,
     _argc: ::std::os::raw::c_int,
@@ -47,15 +45,13 @@ pub unsafe extern "C" fn myvtabConnect(
     return rc;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabDisconnect(pVtab: *mut sqlite3_vtab) -> ::std::os::raw::c_int {
+unsafe extern "C" fn myvtabDisconnect(pVtab: *mut sqlite3_vtab) -> ::std::os::raw::c_int {
     let pMyVtab = pVtab as *mut myvtab_vtab;
     ((*sqlite3_api).free).unwrap()(pMyVtab as *mut ::std::os::raw::c_void);
     return SQLITE_OK as ::std::os::raw::c_int;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabOpen(
+unsafe extern "C" fn myvtabOpen(
     p: *mut sqlite3_vtab,
     ppCursor: *mut *mut sqlite3_vtab_cursor,
 ) -> std::os::raw::c_int {
@@ -72,21 +68,18 @@ pub unsafe extern "C" fn myvtabOpen(
     return SQLITE_OK as i32;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabClose(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
+unsafe extern "C" fn myvtabClose(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
     ((*sqlite3_api).free).unwrap()(cur as *mut ::std::os::raw::c_void);
     return SQLITE_OK as i32;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabNext(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
+unsafe extern "C" fn myvtabNext(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
     let pMyVtab = cur as *mut myvtab_cursor;
     (*pMyVtab).iRowId += 1;
     return SQLITE_OK as i32;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabColumn(
+unsafe extern "C" fn myvtabColumn(
     cur: *mut sqlite3_vtab_cursor,
     ctx: *mut sqlite3_context,
     i: ::std::os::raw::c_int,
@@ -100,8 +93,7 @@ pub unsafe extern "C" fn myvtabColumn(
     return SQLITE_OK as i32;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabRowid(
+unsafe extern "C" fn myvtabRowid(
     cur: *mut sqlite3_vtab_cursor,
     pRowId: *mut i64,
 ) -> ::std::os::raw::c_int {
@@ -110,8 +102,7 @@ pub unsafe extern "C" fn myvtabRowid(
     return SQLITE_OK as i32;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
+unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> ::std::os::raw::c_int {
     let pCur = cur as *mut myvtab_cursor;
     if (*pCur).iRowId >= 10 {
         return 1;
@@ -120,8 +111,7 @@ pub unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> ::std::os::
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabFilter(
+unsafe extern "C" fn myvtabFilter(
     cur: *mut sqlite3_vtab_cursor,
     idxNum: ::std::os::raw::c_int,
     idxStr: *const ::std::os::raw::c_char,
@@ -133,8 +123,7 @@ pub unsafe extern "C" fn myvtabFilter(
     return SQLITE_OK as i32;
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn myvtabBestIndex(
+unsafe extern "C" fn myvtabBestIndex(
     tab: *mut sqlite3_vtab,
     pIdxInfo: *mut sqlite3_index_info,
 ) -> ::std::os::raw::c_int {
