@@ -11,6 +11,7 @@ static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
 #[repr(C)]
 struct myvtab_vtab {
     base: sqlite3_vtab,
+    start: i32,
 }
 
 #[repr(C)]
@@ -19,11 +20,22 @@ struct myvtab_cursor {
     iRowId: i32,
 }
 
+unsafe extern "C" fn myvtabCreate(
+    db: *mut sqlite3,
+    pAux: *mut c_void,
+    argc: c_int,
+    argv: *const *const c_char,
+    ppVtab: *mut *mut sqlite3_vtab,
+    pzErr: *mut *mut c_char,
+) -> c_int {
+    return myvtabConnect(db, pAux, argc, argv, ppVtab, pzErr);
+}
+
 unsafe extern "C" fn myvtabConnect(
     db: *mut sqlite3,
     _pAux: *mut c_void,
-    _argc: c_int,
-    _argv: *const *const c_char,
+    argc: c_int,
+    argv: *const *const c_char,
     ppVtab: *mut *mut sqlite3_vtab,
     _pzErr: *mut *mut c_char,
 ) -> c_int {
@@ -36,12 +48,21 @@ unsafe extern "C" fn myvtabConnect(
         if pvTab == std::ptr::null_mut() {
             return SQLITE_NOMEM as i32;
         }
+        let mut startValue: i32 = 0;
+        if argc > 3 {
+            startValue = std::ffi::CStr::from_ptr(*argv.offset(3))
+                .to_str()
+                .expect("expect valid str")
+                .parse::<i32>()
+                .expect("expect number");
+        }
         let newTab = myvtab_vtab {
             base: sqlite3_vtab {
                 nRef: 0,
                 pModule: std::ptr::null_mut(),
                 zErrMsg: std::ptr::null_mut(),
             },
+            start: startValue,
         };
         std::ptr::write(pvTab, newTab);
     }
@@ -89,10 +110,11 @@ unsafe extern "C" fn myvtabColumn(
     i: c_int,
 ) -> c_int {
     let pCur = cur as *mut myvtab_cursor;
+    let pTab = (*pCur).base.pVtab as *const myvtab_vtab;
     if i == 0 {
-        ((*sqlite3_api).result_int).unwrap()(ctx, 1000 + (*pCur).iRowId);
+        ((*sqlite3_api).result_int).unwrap()(ctx, (*pTab).start + (*pCur).iRowId);
     } else {
-        ((*sqlite3_api).result_int).unwrap()(ctx, 2000 + (*pCur).iRowId);
+        ((*sqlite3_api).result_int).unwrap()(ctx, 2 * (*pTab).start + (*pCur).iRowId);
     }
     return SQLITE_OK as i32;
 }
@@ -135,11 +157,12 @@ unsafe extern "C" fn myvtabBestIndex(
 
 pub static myvtabModule: sqlite3_module = sqlite3_module {
     iVersion: 1,
-    xCreate: None,
+    //xCreate: None,
+    xCreate: Some(myvtabCreate),
     xConnect: Some(myvtabConnect),
     xBestIndex: Some(myvtabBestIndex),
     xDisconnect: Some(myvtabDisconnect),
-    xDestroy: None,
+    xDestroy: Some(myvtabDisconnect),
     xOpen: Some(myvtabOpen),
     xClose: Some(myvtabClose),
     xFilter: Some(myvtabFilter),
