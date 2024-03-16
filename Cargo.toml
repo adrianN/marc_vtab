@@ -10,6 +10,7 @@ name = "marcvtab"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+marclib = {path = "../marclib" }
 
 [build-dependencies]
 bindgen = "0.69.4"

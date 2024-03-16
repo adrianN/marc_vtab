@@ -2,6 +2,8 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
+use marclib::marcrecord::BufferedMarcReader;
+use std::fs::File;
 use std::os::raw::{c_char, c_int, c_void};
 
 include!(concat!(env!("OUT_DIR"), "/sqlite3ext.rs"));
@@ -11,12 +13,13 @@ static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
 #[repr(C)]
 struct myvtab_vtab {
     base: sqlite3_vtab,
-    start: i32,
+    filename: Option<String>, // we make it Option so that we can free it in Disconnect
 }
 
 #[repr(C)]
 struct myvtab_cursor {
     base: sqlite3_vtab_cursor,
+    reader: Option<BufferedMarcReader<File>>,
     iRowId: i32,
 }
 
@@ -48,29 +51,30 @@ unsafe extern "C" fn myvtabConnect(
         if pvTab == std::ptr::null_mut() {
             return SQLITE_NOMEM as i32;
         }
-        let mut startValue: i32 = 0;
         if argc > 3 {
-            startValue = std::ffi::CStr::from_ptr(*argv.offset(3))
+            let filename = std::ffi::CStr::from_ptr(*argv.offset(3))
                 .to_str()
-                .expect("expect valid str")
-                .parse::<i32>()
-                .expect("expect number");
+                .expect("expect valid str");
+            let newTab = myvtab_vtab {
+                base: sqlite3_vtab {
+                    nRef: 0,
+                    pModule: std::ptr::null_mut(),
+                    zErrMsg: std::ptr::null_mut(),
+                },
+                filename: Some(filename.to_owned()),
+            };
+            std::ptr::write(pvTab, newTab);
+            eprintln!("pvTab {:?}", (*pvTab).filename);
+        } else {
+            unimplemented!();
         }
-        let newTab = myvtab_vtab {
-            base: sqlite3_vtab {
-                nRef: 0,
-                pModule: std::ptr::null_mut(),
-                zErrMsg: std::ptr::null_mut(),
-            },
-            start: startValue,
-        };
-        std::ptr::write(pvTab, newTab);
     }
     return rc;
 }
 
 unsafe extern "C" fn myvtabDisconnect(pVtab: *mut sqlite3_vtab) -> c_int {
     let pMyVtab = pVtab as *mut myvtab_vtab;
+    (*pMyVtab).filename = None;
     ((*sqlite3_api).free).unwrap()(pMyVtab as *mut c_void);
     return SQLITE_OK as c_int;
 }
@@ -79,13 +83,21 @@ unsafe extern "C" fn myvtabOpen(
     p: *mut sqlite3_vtab,
     ppCursor: *mut *mut sqlite3_vtab_cursor,
 ) -> std::os::raw::c_int {
+    eprintln!("size {}", std::mem::size_of::<myvtab_cursor>());
     let pCur = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_cursor>() as i32)
         as *mut myvtab_cursor;
     if pCur == std::ptr::null_mut() {
         return SQLITE_NOMEM as i32;
     };
+    let pTab = p as *const myvtab_vtab;
+
+    let filename = (*pTab).filename.as_ref().unwrap();
+    eprintln!("filename {:?}", (*pTab).filename);
     let newCur = myvtab_cursor {
         base: sqlite3_vtab_cursor { pVtab: p },
+        reader: Some(BufferedMarcReader::new(
+            File::open(filename).expect("failed to open file"),
+        )),
         iRowId: 0,
     };
     std::ptr::write(pCur, newCur);
@@ -94,14 +106,20 @@ unsafe extern "C" fn myvtabOpen(
 }
 
 unsafe extern "C" fn myvtabClose(cur: *mut sqlite3_vtab_cursor) -> c_int {
+    let pMyCurser = cur as *mut myvtab_cursor;
+    (*pMyCurser).reader = None;
     ((*sqlite3_api).free).unwrap()(cur as *mut c_void);
     return SQLITE_OK as i32;
 }
 
 unsafe extern "C" fn myvtabNext(cur: *mut sqlite3_vtab_cursor) -> c_int {
     let pMyVtab = cur as *mut myvtab_cursor;
-    (*pMyVtab).iRowId += 1;
-    return SQLITE_OK as i32;
+    if let Ok(true) = (*pMyVtab).reader.as_mut().unwrap().advance() {
+        (*pMyVtab).iRowId += 1;
+        return SQLITE_OK as i32;
+    } else {
+        return SQLITE_ERROR as i32;
+    }
 }
 
 unsafe extern "C" fn myvtabColumn(
@@ -111,10 +129,11 @@ unsafe extern "C" fn myvtabColumn(
 ) -> c_int {
     let pCur = cur as *mut myvtab_cursor;
     let pTab = (*pCur).base.pVtab as *const myvtab_vtab;
+    let record = (*pCur).reader.as_ref().unwrap().get().unwrap();
     if i == 0 {
-        ((*sqlite3_api).result_int).unwrap()(ctx, (*pTab).start + (*pCur).iRowId);
+        ((*sqlite3_api).result_int).unwrap()(ctx, record.header().record_length() as i32);
     } else {
-        ((*sqlite3_api).result_int).unwrap()(ctx, 2 * (*pTab).start + (*pCur).iRowId);
+        ((*sqlite3_api).result_int).unwrap()(ctx, 2 * 1000 + (*pCur).iRowId);
     }
     return SQLITE_OK as i32;
 }
@@ -143,6 +162,7 @@ unsafe extern "C" fn myvtabFilter(
 ) -> c_int {
     let pCur = cur as *mut myvtab_cursor;
     (*pCur).iRowId = 1;
+    (*pCur).reader.as_mut().unwrap().advance();
     return SQLITE_OK as i32;
 }
 

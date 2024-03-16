@@ -151,6 +151,14 @@ name = "marc_vtab"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "marclib",
+]
+
+[[package]]
+name = "marclib"
+version = "0.1.0"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
