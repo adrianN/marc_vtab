@@ -114,10 +114,12 @@ unsafe extern "C" fn myvtabClose(cur: *mut sqlite3_vtab_cursor) -> c_int {
 
 unsafe extern "C" fn myvtabNext(cur: *mut sqlite3_vtab_cursor) -> c_int {
     let pMyVtab = cur as *mut myvtab_cursor;
-    if let Ok(true) = (*pMyVtab).reader.as_mut().unwrap().advance() {
+    let success = (*pMyVtab).reader.as_mut().unwrap().advance();
+    if success.is_ok() {
         (*pMyVtab).iRowId += 1;
         return SQLITE_OK as i32;
     } else {
+        dbg!(success);
         return SQLITE_ERROR as i32;
     }
 }
@@ -146,7 +148,9 @@ unsafe extern "C" fn myvtabRowid(cur: *mut sqlite3_vtab_cursor, pRowId: *mut i64
 
 unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> c_int {
     let pCur = cur as *mut myvtab_cursor;
-    if (*pCur).iRowId >= 10 {
+    if (*pCur).reader.as_ref().map(|x| x.is_eof()).unwrap_or(false) { return 1; }
+
+    if (*pCur).iRowId >= 1000000 {
         return 1;
     } else {
         return 0;
