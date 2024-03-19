@@ -13,7 +13,7 @@ static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
 #[repr(C)]
 struct myvtab_vtab {
     base: sqlite3_vtab,
-    filename: Option<String>, // we make it Option so that we can free it in Disconnect
+    vtabArgs : Option<VtabArgs>// we make it Option so that we can free it in Disconnect
 }
 
 #[repr(C)]
@@ -34,6 +34,17 @@ unsafe extern "C" fn myvtabCreate(
     return myvtabConnect(db, pAux, argc, argv, ppVtab, pzErr);
 }
 
+struct VtabArgs {
+  filename : String,
+  fieldTypes : Vec<usize>
+}
+
+fn readVtabArgs(args : Vec<&str>) -> VtabArgs {
+  let filename = args[0].to_owned();
+  let fieldTypes : Vec<usize> = args[1..].iter().map(|x| x.parse::<usize>().expect("invalid field type")).collect::<Vec<usize>>();
+  VtabArgs { filename : filename, fieldTypes : fieldTypes }
+}
+
 unsafe extern "C" fn myvtabConnect(
     db: *mut sqlite3,
     _pAux: *mut c_void,
@@ -52,19 +63,19 @@ unsafe extern "C" fn myvtabConnect(
             return SQLITE_NOMEM as i32;
         }
         if argc > 3 {
-            let filename = std::ffi::CStr::from_ptr(*argv.offset(3))
+            let arguments = (3..argc).map(|i| std::ffi::CStr::from_ptr(*argv.offset(i as isize))
                 .to_str()
-                .expect("expect valid str");
+                .expect("expect valid str")).collect();
+            let vtabArgs = readVtabArgs(arguments);
             let newTab = myvtab_vtab {
                 base: sqlite3_vtab {
                     nRef: 0,
                     pModule: std::ptr::null_mut(),
                     zErrMsg: std::ptr::null_mut(),
                 },
-                filename: Some(filename.to_owned()),
+                vtabArgs : Some(vtabArgs),
             };
             std::ptr::write(pvTab, newTab);
-            eprintln!("pvTab {:?}", (*pvTab).filename);
         } else {
             unimplemented!();
         }
@@ -74,7 +85,7 @@ unsafe extern "C" fn myvtabConnect(
 
 unsafe extern "C" fn myvtabDisconnect(pVtab: *mut sqlite3_vtab) -> c_int {
     let pMyVtab = pVtab as *mut myvtab_vtab;
-    (*pMyVtab).filename = None;
+    (*pMyVtab).vtabArgs = None;
     ((*sqlite3_api).free).unwrap()(pMyVtab as *mut c_void);
     return SQLITE_OK as c_int;
 }
@@ -91,8 +102,7 @@ unsafe extern "C" fn myvtabOpen(
     };
     let pTab = p as *const myvtab_vtab;
 
-    let filename = (*pTab).filename.as_ref().unwrap();
-    eprintln!("filename {:?}", (*pTab).filename);
+    let filename = &(*pTab).vtabArgs.as_ref().unwrap().filename;
     let newCur = myvtab_cursor {
         base: sqlite3_vtab_cursor { pVtab: p },
         reader: Some(BufferedMarcReader::new(
