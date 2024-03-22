@@ -4,6 +4,7 @@
 
 use marclib::marcrecord::{BufferedMarcReader, MarcRecordFieldIter};
 use marclib::record::RecordField;
+use serde_json::*;
 use std::fs::File;
 use std::os::raw::{c_char, c_int, c_void};
 
@@ -52,13 +53,13 @@ fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
     }
 }
 
-fn createTableFromArgs(vtabArgs : &VtabArgs) -> String {
-  let mut s = "CREATE TABLE x(".to_string();
-  for fieldtype in &vtabArgs.fieldTypes {
-    s += &format!("x{} BLOB, ", fieldtype);
-  }
-  s += "entry_length INT);";
-  s
+fn createTableFromArgs(vtabArgs: &VtabArgs) -> String {
+    let mut s = "CREATE TABLE x(".to_string();
+    for fieldtype in &vtabArgs.fieldTypes {
+        s += &format!("x{} BLOB, ", fieldtype);
+    }
+    s += "entry_length INT);";
+    s
 }
 
 unsafe extern "C" fn myvtabConnect(
@@ -82,7 +83,8 @@ unsafe extern "C" fn myvtabConnect(
     } else {
         unimplemented!();
     }
-    let s = std::ffi::CString::new(createTableFromArgs(vtabArgs.as_ref().unwrap())).expect("Can't alloc string");
+    let s = std::ffi::CString::new(createTableFromArgs(vtabArgs.as_ref().unwrap()))
+        .expect("Can't alloc string");
     let rc = ((*sqlite3_api).declare_vtab).unwrap()(db, s.as_ptr());
     if rc == SQLITE_OK as i32 {
         let pvTab = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_vtab>() as i32)
@@ -166,17 +168,36 @@ unsafe extern "C" fn myvtabColumn(
     let field_types = &(*pTab).vtabArgs.as_ref().unwrap().fieldTypes;
     let i = j as usize;
     if i < field_types.len() {
-      let mut iter = MarcRecordFieldIter::new(&record, Some(field_types[i])); 
-      let mut fields = iter.collect::<Vec<RecordField>>();
-      match fields.len() {
-        0 => {((*sqlite3_api).result_null).unwrap()(ctx);}
-        1 => {((*sqlite3_api).result_blob).unwrap()(ctx, fields[0].data.as_ptr() as *const c_void, fields[0].data.len() as c_int, None);}
-        _ => {unimplemented!();}
-      }
+        let mut iter = MarcRecordFieldIter::new(&record, Some(field_types[i]));
+        let mut fields = iter.collect::<Vec<RecordField>>();
+        match fields.len() {
+            0 => {
+                ((*sqlite3_api).result_null).unwrap()(ctx);
+            }
+            1 => {
+                ((*sqlite3_api).result_blob).unwrap()(
+                    ctx,
+                    fields[0].data.as_ptr() as *const c_void,
+                    fields[0].data.len() as c_int,
+                    None,
+                );
+            }
+            _ => {
+                dbg!(fields.len());
+                let field_values = fields.iter().map(|x| x.data).collect::<Vec<&[u8]>>();
+                let serialized = serde_json::to_string(&field_values).expect("can't serialize");
+                ((*sqlite3_api).result_blob).unwrap()(
+                    ctx,
+                    serialized.as_bytes().as_ptr() as *const c_void,
+                    serialized.as_bytes().len() as c_int,
+                    None,
+                );
+            }
+        }
     } else if i == field_types.len() {
         ((*sqlite3_api).result_int).unwrap()(ctx, record.header().record_length() as i32);
     } else {
-      unimplemented!();
+        unimplemented!();
     }
     return SQLITE_OK as i32;
 }
