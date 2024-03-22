@@ -2,7 +2,8 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use marclib::marcrecord::BufferedMarcReader;
+use marclib::marcrecord::{BufferedMarcReader, MarcRecordFieldIter};
+use marclib::record::RecordField;
 use std::fs::File;
 use std::os::raw::{c_char, c_int, c_void};
 
@@ -13,7 +14,7 @@ static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
 #[repr(C)]
 struct myvtab_vtab {
     base: sqlite3_vtab,
-    vtabArgs : Option<VtabArgs>// we make it Option so that we can free it in Disconnect
+    vtabArgs: Option<VtabArgs>, // we make it Option so that we can free it in Disconnect
 }
 
 #[repr(C)]
@@ -35,14 +36,29 @@ unsafe extern "C" fn myvtabCreate(
 }
 
 struct VtabArgs {
-  filename : String,
-  fieldTypes : Vec<usize>
+    filename: String,
+    fieldTypes: Vec<usize>,
 }
 
-fn readVtabArgs(args : Vec<&str>) -> VtabArgs {
-  let filename = args[0].to_owned();
-  let fieldTypes : Vec<usize> = args[1..].iter().map(|x| x.parse::<usize>().expect("invalid field type")).collect::<Vec<usize>>();
-  VtabArgs { filename : filename, fieldTypes : fieldTypes }
+fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
+    let filename = args[0].to_owned();
+    let fieldTypes: Vec<usize> = args[1..]
+        .iter()
+        .map(|x| x.parse::<usize>().expect("invalid field type"))
+        .collect::<Vec<usize>>();
+    VtabArgs {
+        filename: filename,
+        fieldTypes: fieldTypes,
+    }
+}
+
+fn createTableFromArgs(vtabArgs : &VtabArgs) -> String {
+  let mut s = "CREATE TABLE x(".to_string();
+  for fieldtype in &vtabArgs.fieldTypes {
+    s += &format!("x{} BLOB, ", fieldtype);
+  }
+  s += "entry_length INT);";
+  s
 }
 
 unsafe extern "C" fn myvtabConnect(
@@ -53,7 +69,20 @@ unsafe extern "C" fn myvtabConnect(
     ppVtab: *mut *mut sqlite3_vtab,
     _pzErr: *mut *mut c_char,
 ) -> c_int {
-    let s = std::ffi::CString::new("CREATE TABLE x(a,b)").expect("Can't alloc string");
+    let mut vtabArgs = None;
+    if argc > 3 {
+        let arguments = (3..argc)
+            .map(|i| {
+                std::ffi::CStr::from_ptr(*argv.offset(i as isize))
+                    .to_str()
+                    .expect("expect valid str")
+            })
+            .collect();
+        vtabArgs = Some(readVtabArgs(arguments));
+    } else {
+        unimplemented!();
+    }
+    let s = std::ffi::CString::new(createTableFromArgs(vtabArgs.as_ref().unwrap())).expect("Can't alloc string");
     let rc = ((*sqlite3_api).declare_vtab).unwrap()(db, s.as_ptr());
     if rc == SQLITE_OK as i32 {
         let pvTab = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_vtab>() as i32)
@@ -62,23 +91,15 @@ unsafe extern "C" fn myvtabConnect(
         if pvTab == std::ptr::null_mut() {
             return SQLITE_NOMEM as i32;
         }
-        if argc > 3 {
-            let arguments = (3..argc).map(|i| std::ffi::CStr::from_ptr(*argv.offset(i as isize))
-                .to_str()
-                .expect("expect valid str")).collect();
-            let vtabArgs = readVtabArgs(arguments);
-            let newTab = myvtab_vtab {
-                base: sqlite3_vtab {
-                    nRef: 0,
-                    pModule: std::ptr::null_mut(),
-                    zErrMsg: std::ptr::null_mut(),
-                },
-                vtabArgs : Some(vtabArgs),
-            };
-            std::ptr::write(pvTab, newTab);
-        } else {
-            unimplemented!();
-        }
+        let newTab = myvtab_vtab {
+            base: sqlite3_vtab {
+                nRef: 0,
+                pModule: std::ptr::null_mut(),
+                zErrMsg: std::ptr::null_mut(),
+            },
+            vtabArgs: vtabArgs,
+        };
+        std::ptr::write(pvTab, newTab);
     }
     return rc;
 }
@@ -137,15 +158,25 @@ unsafe extern "C" fn myvtabNext(cur: *mut sqlite3_vtab_cursor) -> c_int {
 unsafe extern "C" fn myvtabColumn(
     cur: *mut sqlite3_vtab_cursor,
     ctx: *mut sqlite3_context,
-    i: c_int,
+    j: c_int,
 ) -> c_int {
     let pCur = cur as *mut myvtab_cursor;
     let pTab = (*pCur).base.pVtab as *const myvtab_vtab;
     let record = (*pCur).reader.as_ref().unwrap().get().unwrap();
-    if i == 0 {
+    let field_types = &(*pTab).vtabArgs.as_ref().unwrap().fieldTypes;
+    let i = j as usize;
+    if i < field_types.len() {
+      let mut iter = MarcRecordFieldIter::new(&record, Some(field_types[i])); 
+      let mut fields = iter.collect::<Vec<RecordField>>();
+      match fields.len() {
+        0 => {((*sqlite3_api).result_null).unwrap()(ctx);}
+        1 => {((*sqlite3_api).result_blob).unwrap()(ctx, fields[0].data.as_ptr() as *const c_void, fields[0].data.len() as c_int, None);}
+        _ => {unimplemented!();}
+      }
+    } else if i == field_types.len() {
         ((*sqlite3_api).result_int).unwrap()(ctx, record.header().record_length() as i32);
     } else {
-        ((*sqlite3_api).result_int).unwrap()(ctx, 2 * 1000 + (*pCur).iRowId);
+      unimplemented!();
     }
     return SQLITE_OK as i32;
 }
@@ -158,7 +189,9 @@ unsafe extern "C" fn myvtabRowid(cur: *mut sqlite3_vtab_cursor, pRowId: *mut i64
 
 unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> c_int {
     let pCur = cur as *mut myvtab_cursor;
-    if (*pCur).reader.as_ref().map(|x| x.is_eof()).unwrap_or(false) { return 1; }
+    if (*pCur).reader.as_ref().map(|x| x.is_eof()).unwrap_or(false) {
+        return 1;
+    }
 
     if (*pCur).iRowId >= 1000000 {
         return 1;
