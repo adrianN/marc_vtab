@@ -42,14 +42,39 @@ struct VtabArgs {
 }
 
 fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
-    let filename = args[0].to_owned();
-    let fieldTypes: Vec<usize> = args[1..]
-        .iter()
-        .map(|x| x.parse::<usize>().expect("invalid field type"))
-        .collect::<Vec<usize>>();
+    let mut filename = None;
+    let mut fieldTypes = None;
+    for arg in &args {
+        if arg.starts_with("file") {
+            filename = arg.rsplit('=').next().map(|x| x.trim());
+        } else if arg.starts_with("fields") {
+            if let Some(fieldList) = arg
+                .rsplit('=')
+                .next()
+                .map(|x| x.trim())
+                .and_then(|x| x.strip_prefix('\''))
+                .and_then(|x| x.strip_suffix('\''))
+            {
+                fieldTypes = Some(
+                    fieldList
+                        .split(',')
+                        .map(|x| x.trim().parse::<usize>().expect("invalid field type"))
+                        .collect::<Vec<usize>>(),
+                );
+            } else {
+                dbg!(arg);
+                unimplemented!();
+            }
+        }
+    }
+    //let filename = args[0].to_owned();
+    //    let fieldTypes: Vec<usize> = args[1..]
+    //        .iter()
+    //        .map(|x| x.parse::<usize>().expect("invalid field type"))
+    //        .collect::<Vec<usize>>();
     VtabArgs {
-        filename: filename,
-        fieldTypes: fieldTypes,
+        filename: filename.unwrap().to_owned(),
+        fieldTypes: fieldTypes.unwrap(),
     }
 }
 
