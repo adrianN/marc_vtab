@@ -192,8 +192,9 @@ unsafe extern "C" fn myvtabColumn(
     let record = (*pCur).reader.as_ref().unwrap().get().unwrap();
     let field_types = &(*pTab).vtabArgs.as_ref().unwrap().fieldTypes;
     let i = j as usize;
-                let ptr =usize::MAX as *mut c_void;
-                let SQLITE_TRANSIENT = std::mem::transmute::<*mut c_void, unsafe extern "C" fn(arg1: *mut c_void)>(ptr);
+    let ptr = usize::MAX as *mut c_void;
+    let SQLITE_TRANSIENT =
+        std::mem::transmute::<*mut c_void, unsafe extern "C" fn(arg1: *mut c_void)>(ptr);
     if i < field_types.len() {
         let mut iter = MarcRecordFieldIter::new(&record, Some(field_types[i]));
         let mut fields = iter.collect::<Vec<RecordField>>();
@@ -202,7 +203,6 @@ unsafe extern "C" fn myvtabColumn(
                 ((*sqlite3_api).result_null).unwrap()(ctx);
             }
             1 => {
-        
                 ((*sqlite3_api).result_blob).unwrap()(
                     ctx,
                     fields[0].data.as_ptr() as *const c_void,
