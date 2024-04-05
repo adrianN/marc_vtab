@@ -3,9 +3,11 @@
 #![allow(non_snake_case)]
 
 use marclib::marcrecord::{BufferedMarcReader, MarcRecordFieldIter};
+use marclib::record::Record;
 use marclib::record::RecordField;
 use serde_json::*;
 use std::fs::File;
+use std::io::Cursor;
 use std::os::raw::{c_char, c_int, c_void};
 
 include!(concat!(env!("OUT_DIR"), "/sqlite3ext.rs"));
@@ -83,7 +85,7 @@ fn createTableFromArgs(vtabArgs: &VtabArgs) -> String {
     for fieldtype in &vtabArgs.fieldTypes {
         s += &format!("x{} BLOB, ", fieldtype);
     }
-    s += "entry_length INT);";
+    s += "entry_length INT, full_record BLOB);";
     s
 }
 
@@ -154,7 +156,7 @@ unsafe extern "C" fn myvtabOpen(
     let newCur = myvtab_cursor {
         base: sqlite3_vtab_cursor { pVtab: p },
         reader: Some(BufferedMarcReader::new(
-            File::open(filename).expect("failed to open file"),
+            File::open(filename).expect(&format!("failed to open file {}", filename)),
         )),
         iRowId: 0,
     };
@@ -218,13 +220,25 @@ unsafe extern "C" fn myvtabColumn(
                 ((*sqlite3_api).result_blob).unwrap()(
                     ctx,
                     cstr.as_ptr() as *const c_void,
-                    -1 as c_int,
+                    l as c_int,
                     Some(SQLITE_TRANSIENT),
                 );
             }
         }
     } else if i == field_types.len() {
         ((*sqlite3_api).result_int).unwrap()(ctx, record.header().record_length() as i32);
+    } else if i == field_types.len() + 1 {
+        let mut buf = Vec::<u8>::new();
+        let mut cur = Cursor::new(buf);
+        record.to_marc21(&mut cur);
+        let buflen = cur.get_ref().len();
+                ((*sqlite3_api).result_blob).unwrap()(
+                    ctx,
+                    cur.get_ref().as_ptr() as *const c_void,
+                    buflen as c_int,
+                    Some(SQLITE_TRANSIENT),
+                );
+        
     } else {
         unimplemented!();
     }
