@@ -12,13 +12,16 @@ con.enable_load_extension(True)
 con.load_extension('/home/adrian/marc_vtab/target/debug/libmarcvtab')
 
 c = con.cursor()
-c.execute("drop table myvtab")
+try:
+    c.execute("drop table marcvtab")
+except:
+    pass
 c.execute(
-"create virtual table myvtab using myvtab(file=authorities.mrc, fields='1,3,5,8,35,65,150');")
+"create virtual table marcvtab using marcvtab(file=authorities.mrc, fields='1,3,5,8,35,65,150');")
 
-#c.execute(" select * from myvtab order by entry_length desc limit 1; ")
+#c.execute(" select * from marcvtab order by entry_length desc limit 1; ")
 #print_table(c.fetchall())
-#c.execute(" select x65 from myvtab order by entry_length desc limit 1; ")
+#c.execute(" select x65 from marcvtab order by entry_length desc limit 1; ")
 #print_table(c.fetchall())
-c.execute("select x35,x150, field_types from myvtab where cast(x35 as varchar) like '%4275004%' order by entry_length desc limit 2")
+c.execute("select x35,x150, field_types from marcvtab where cast(x35 as varchar) like '%4275004%' order by entry_length desc limit 2")
 print_table(c.fetchall())

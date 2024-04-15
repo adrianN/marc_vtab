@@ -15,19 +15,19 @@ include!(concat!(env!("OUT_DIR"), "/sqlite3ext.rs"));
 static mut sqlite3_api: *const sqlite3_api_routines = std::ptr::null();
 
 #[repr(C)]
-struct myvtab_vtab {
+struct marcvtab_vtab {
     base: sqlite3_vtab,
     vtabArgs: Option<VtabArgs>, // we make it Option so that we can free it in Disconnect
 }
 
 #[repr(C)]
-struct myvtab_cursor {
+struct marcvtab_cursor {
     base: sqlite3_vtab_cursor,
     reader: Option<BufferedMarcReader<File>>,
     iRowId: i32,
 }
 
-unsafe extern "C" fn myvtabCreate(
+unsafe extern "C" fn marcvtabCreate(
     db: *mut sqlite3,
     pAux: *mut c_void,
     argc: c_int,
@@ -35,7 +35,7 @@ unsafe extern "C" fn myvtabCreate(
     ppVtab: *mut *mut sqlite3_vtab,
     pzErr: *mut *mut c_char,
 ) -> c_int {
-    return myvtabConnect(db, pAux, argc, argv, ppVtab, pzErr);
+    return marcvtabConnect(db, pAux, argc, argv, ppVtab, pzErr);
 }
 
 struct VtabArgs {
@@ -64,7 +64,6 @@ fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
                         .collect::<Vec<usize>>(),
                 );
             } else {
-                dbg!(arg);
                 unimplemented!();
             }
         }
@@ -89,7 +88,7 @@ fn createTableFromArgs(vtabArgs: &VtabArgs) -> String {
     s
 }
 
-unsafe extern "C" fn myvtabConnect(
+unsafe extern "C" fn marcvtabConnect(
     db: *mut sqlite3,
     _pAux: *mut c_void,
     argc: c_int,
@@ -114,13 +113,13 @@ unsafe extern "C" fn myvtabConnect(
         .expect("Can't alloc string");
     let rc = ((*sqlite3_api).declare_vtab).unwrap()(db, s.as_ptr());
     if rc == SQLITE_OK as i32 {
-        let pvTab = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_vtab>() as i32)
-            as *mut myvtab_vtab;
+        let pvTab = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<marcvtab_vtab>() as i32)
+            as *mut marcvtab_vtab;
         *ppVtab = pvTab as *mut sqlite3_vtab;
         if pvTab == std::ptr::null_mut() {
             return SQLITE_NOMEM as i32;
         }
-        let newTab = myvtab_vtab {
+        let newTab = marcvtab_vtab {
             base: sqlite3_vtab {
                 nRef: 0,
                 pModule: std::ptr::null_mut(),
@@ -133,27 +132,26 @@ unsafe extern "C" fn myvtabConnect(
     return rc;
 }
 
-unsafe extern "C" fn myvtabDisconnect(pVtab: *mut sqlite3_vtab) -> c_int {
-    let pMyVtab = pVtab as *mut myvtab_vtab;
+unsafe extern "C" fn marcvtabDisconnect(pVtab: *mut sqlite3_vtab) -> c_int {
+    let pMyVtab = pVtab as *mut marcvtab_vtab;
     (*pMyVtab).vtabArgs = None;
     ((*sqlite3_api).free).unwrap()(pMyVtab as *mut c_void);
     return SQLITE_OK as c_int;
 }
 
-unsafe extern "C" fn myvtabOpen(
+unsafe extern "C" fn marcvtabOpen(
     p: *mut sqlite3_vtab,
     ppCursor: *mut *mut sqlite3_vtab_cursor,
 ) -> std::os::raw::c_int {
-    eprintln!("size {}", std::mem::size_of::<myvtab_cursor>());
-    let pCur = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<myvtab_cursor>() as i32)
-        as *mut myvtab_cursor;
+    let pCur = ((*sqlite3_api).malloc).unwrap()(std::mem::size_of::<marcvtab_cursor>() as i32)
+        as *mut marcvtab_cursor;
     if pCur == std::ptr::null_mut() {
         return SQLITE_NOMEM as i32;
     };
-    let pTab = p as *const myvtab_vtab;
+    let pTab = p as *const marcvtab_vtab;
 
     let filename = &(*pTab).vtabArgs.as_ref().unwrap().filename;
-    let newCur = myvtab_cursor {
+    let newCur = marcvtab_cursor {
         base: sqlite3_vtab_cursor { pVtab: p },
         reader: Some(BufferedMarcReader::new(
             File::open(filename).expect(&format!("failed to open file {}", filename)),
@@ -165,32 +163,31 @@ unsafe extern "C" fn myvtabOpen(
     return SQLITE_OK as i32;
 }
 
-unsafe extern "C" fn myvtabClose(cur: *mut sqlite3_vtab_cursor) -> c_int {
-    let pMyCurser = cur as *mut myvtab_cursor;
+unsafe extern "C" fn marcvtabClose(cur: *mut sqlite3_vtab_cursor) -> c_int {
+    let pMyCurser = cur as *mut marcvtab_cursor;
     (*pMyCurser).reader = None;
     ((*sqlite3_api).free).unwrap()(cur as *mut c_void);
     return SQLITE_OK as i32;
 }
 
-unsafe extern "C" fn myvtabNext(cur: *mut sqlite3_vtab_cursor) -> c_int {
-    let pMyVtab = cur as *mut myvtab_cursor;
+unsafe extern "C" fn marcvtabNext(cur: *mut sqlite3_vtab_cursor) -> c_int {
+    let pMyVtab = cur as *mut marcvtab_cursor;
     let success = (*pMyVtab).reader.as_mut().unwrap().advance();
     if success.is_ok() {
         (*pMyVtab).iRowId += 1;
         return SQLITE_OK as i32;
     } else {
-        dbg!(success);
         return SQLITE_ERROR as i32;
     }
 }
 
-unsafe extern "C" fn myvtabColumn(
+unsafe extern "C" fn marcvtabColumn(
     cur: *mut sqlite3_vtab_cursor,
     ctx: *mut sqlite3_context,
     j: c_int,
 ) -> c_int {
-    let pCur = cur as *mut myvtab_cursor;
-    let pTab = (*pCur).base.pVtab as *const myvtab_vtab;
+    let pCur = cur as *mut marcvtab_cursor;
+    let pTab = (*pCur).base.pVtab as *const marcvtab_vtab;
     let record = (*pCur).reader.as_ref().unwrap().get().unwrap();
     let field_types = &(*pTab).vtabArgs.as_ref().unwrap().fieldTypes;
     let i = j as usize;
@@ -267,14 +264,14 @@ unsafe extern "C" fn myvtabColumn(
     return SQLITE_OK as i32;
 }
 
-unsafe extern "C" fn myvtabRowid(cur: *mut sqlite3_vtab_cursor, pRowId: *mut i64) -> c_int {
-    let pCur = cur as *mut myvtab_cursor;
+unsafe extern "C" fn marcvtabRowid(cur: *mut sqlite3_vtab_cursor, pRowId: *mut i64) -> c_int {
+    let pCur = cur as *mut marcvtab_cursor;
     *pRowId = (*pCur).iRowId as i64;
     return SQLITE_OK as i32;
 }
 
-unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> c_int {
-    let pCur = cur as *mut myvtab_cursor;
+unsafe extern "C" fn marcvtabEof(cur: *mut sqlite3_vtab_cursor) -> c_int {
+    let pCur = cur as *mut marcvtab_cursor;
     if (*pCur).reader.as_ref().map(|x| x.is_eof()).unwrap_or(false) {
         return 1;
     }
@@ -286,20 +283,20 @@ unsafe extern "C" fn myvtabEof(cur: *mut sqlite3_vtab_cursor) -> c_int {
     }
 }
 
-unsafe extern "C" fn myvtabFilter(
+unsafe extern "C" fn marcvtabFilter(
     cur: *mut sqlite3_vtab_cursor,
     idxNum: c_int,
     idxStr: *const c_char,
     argc: c_int,
     argv: *mut *mut sqlite3_value,
 ) -> c_int {
-    let pCur = cur as *mut myvtab_cursor;
+    let pCur = cur as *mut marcvtab_cursor;
     (*pCur).iRowId = 1;
     (*pCur).reader.as_mut().unwrap().advance();
     return SQLITE_OK as i32;
 }
 
-unsafe extern "C" fn myvtabBestIndex(
+unsafe extern "C" fn marcvtabBestIndex(
     tab: *mut sqlite3_vtab,
     pIdxInfo: *mut sqlite3_index_info,
 ) -> c_int {
@@ -308,21 +305,21 @@ unsafe extern "C" fn myvtabBestIndex(
     return SQLITE_OK as i32;
 }
 
-pub static myvtabModule: sqlite3_module = sqlite3_module {
+pub static marcvtabModule: sqlite3_module = sqlite3_module {
     iVersion: 1,
     //xCreate: None,
-    xCreate: Some(myvtabCreate),
-    xConnect: Some(myvtabConnect),
-    xBestIndex: Some(myvtabBestIndex),
-    xDisconnect: Some(myvtabDisconnect),
-    xDestroy: Some(myvtabDisconnect),
-    xOpen: Some(myvtabOpen),
-    xClose: Some(myvtabClose),
-    xFilter: Some(myvtabFilter),
-    xNext: Some(myvtabNext),
-    xEof: Some(myvtabEof),
-    xColumn: Some(myvtabColumn),
-    xRowid: Some(myvtabRowid),
+    xCreate: Some(marcvtabCreate),
+    xConnect: Some(marcvtabConnect),
+    xBestIndex: Some(marcvtabBestIndex),
+    xDisconnect: Some(marcvtabDisconnect),
+    xDestroy: Some(marcvtabDisconnect),
+    xOpen: Some(marcvtabOpen),
+    xClose: Some(marcvtabClose),
+    xFilter: Some(marcvtabFilter),
+    xNext: Some(marcvtabNext),
+    xEof: Some(marcvtabEof),
+    xColumn: Some(marcvtabColumn),
+    xRowid: Some(marcvtabRowid),
     xUpdate: None,
     xBegin: None,
     xSync: None,
@@ -344,8 +341,8 @@ pub unsafe extern "C" fn sqlite3_extension_init(
     pApi: *const sqlite3_api_routines,
 ) -> c_int {
     sqlite3_api = pApi;
-    let s = std::ffi::CString::new("myvtab").expect("Can't alloc string");
+    let s = std::ffi::CString::new("marcvtab").expect("Can't alloc string");
     let rc =
-        (*sqlite3_api).create_module.unwrap()(db, s.as_ptr(), &myvtabModule, std::ptr::null_mut());
+        (*sqlite3_api).create_module.unwrap()(db, s.as_ptr(), &marcvtabModule, std::ptr::null_mut());
     return rc as c_int;
 }
