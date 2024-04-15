@@ -85,7 +85,7 @@ fn createTableFromArgs(vtabArgs: &VtabArgs) -> String {
     for fieldtype in &vtabArgs.fieldTypes {
         s += &format!("x{} BLOB, ", fieldtype);
     }
-    s += "entry_length INT, full_record BLOB);";
+    s += "entry_length INT, full_record BLOB, field_types BLOB);";
     s
 }
 
@@ -204,16 +204,27 @@ unsafe extern "C" fn myvtabColumn(
             0 => {
                 ((*sqlite3_api).result_null).unwrap()(ctx);
             }
-            1 => {
-                ((*sqlite3_api).result_blob).unwrap()(
-                    ctx,
-                    fields[0].data.as_ptr() as *const c_void,
-                    fields[0].data.len() as c_int,
-                    Some(SQLITE_TRANSIENT),
-                );
-            }
+            //            1 => {
+            //                ((*sqlite3_api).result_blob).unwrap()(
+            //                    ctx,
+            //                    fields[0].data.as_ptr() as *const c_void,
+            //                    fields[0].data.len() as c_int,
+            //                    Some(SQLITE_TRANSIENT),
+            //                );
+            //            }
             _ => {
-                let field_values = fields.iter().map(|x| x.utf8_data()).collect::<Vec<&str>>();
+                let field_values = fields
+                    .iter()
+                    .map(|x| {
+                        if x.has_subfields() {
+                            x.subfield_iter()
+                                .map(|y| y.utf8_data().to_owned())
+                                .collect()
+                        } else {
+                            vec![x.utf8_data().to_owned()]
+                        }
+                    })
+                    .collect::<Vec<Vec<String>>>();
                 let serialized = serde_json::to_string(&field_values).expect("can't serialize");
                 let l = serialized.as_bytes().len();
                 let cstr = std::ffi::CString::new(serialized).expect("can't create cstring");
@@ -232,13 +243,24 @@ unsafe extern "C" fn myvtabColumn(
         let mut cur = Cursor::new(buf);
         record.to_marc21(&mut cur);
         let buflen = cur.get_ref().len();
-                ((*sqlite3_api).result_blob).unwrap()(
-                    ctx,
-                    cur.get_ref().as_ptr() as *const c_void,
-                    buflen as c_int,
-                    Some(SQLITE_TRANSIENT),
-                );
-        
+        ((*sqlite3_api).result_blob).unwrap()(
+            ctx,
+            cur.get_ref().as_ptr() as *const c_void,
+            buflen as c_int,
+            Some(SQLITE_TRANSIENT),
+        );
+    } else if i == field_types.len() + 2 {
+        let mut iter = MarcRecordFieldIter::new(&record, None);
+        let types = iter.map(|field| field.field_type).collect::<Vec<usize>>();
+        let serialized = serde_json::to_string(&types).expect("can't serialize");
+        let l = serialized.as_bytes().len();
+        let cstr = std::ffi::CString::new(serialized).expect("can't create cstring");
+        ((*sqlite3_api).result_blob).unwrap()(
+            ctx,
+            cstr.as_ptr() as *const c_void,
+            l as c_int,
+            Some(SQLITE_TRANSIENT),
+        );
     } else {
         unimplemented!();
     }
