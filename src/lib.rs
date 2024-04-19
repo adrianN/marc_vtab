@@ -5,7 +5,6 @@
 use marclib::marcrecord::{BufferedMarcReader, MarcRecordFieldIter};
 use marclib::record::Record;
 use marclib::record::RecordField;
-use serde_json::*;
 use std::fs::File;
 use std::io::Cursor;
 use std::os::raw::{c_char, c_int, c_void};
@@ -195,8 +194,8 @@ unsafe extern "C" fn marcvtabColumn(
     let SQLITE_TRANSIENT =
         std::mem::transmute::<*mut c_void, unsafe extern "C" fn(arg1: *mut c_void)>(ptr);
     if i < field_types.len() {
-        let mut iter = MarcRecordFieldIter::new(&record, Some(field_types[i]));
-        let mut fields = iter.collect::<Vec<RecordField>>();
+        let iter = MarcRecordFieldIter::new(&record, Some(field_types[i]));
+        let fields = iter.collect::<Vec<RecordField>>();
         match fields.len() {
             0 => {
                 ((*sqlite3_api).result_null).unwrap()(ctx);
@@ -236,9 +235,8 @@ unsafe extern "C" fn marcvtabColumn(
     } else if i == field_types.len() {
         ((*sqlite3_api).result_int).unwrap()(ctx, record.header().record_length() as i32);
     } else if i == field_types.len() + 1 {
-        let mut buf = Vec::<u8>::new();
-        let mut cur = Cursor::new(buf);
-        record.to_marc21(&mut cur);
+        let mut cur = Cursor::new(Vec::<u8>::new());
+        if record.to_marc21(&mut cur).is_err() { return SQLITE_ERROR as c_int }
         let buflen = cur.get_ref().len();
         ((*sqlite3_api).result_blob).unwrap()(
             ctx,
@@ -247,7 +245,7 @@ unsafe extern "C" fn marcvtabColumn(
             Some(SQLITE_TRANSIENT),
         );
     } else if i == field_types.len() + 2 {
-        let mut iter = MarcRecordFieldIter::new(&record, None);
+        let iter = MarcRecordFieldIter::new(&record, None);
         let types = iter.map(|field| field.field_type).collect::<Vec<usize>>();
         let serialized = serde_json::to_string(&types).expect("can't serialize");
         let l = serialized.as_bytes().len();
@@ -285,19 +283,22 @@ unsafe extern "C" fn marcvtabEof(cur: *mut sqlite3_vtab_cursor) -> c_int {
 
 unsafe extern "C" fn marcvtabFilter(
     cur: *mut sqlite3_vtab_cursor,
-    idxNum: c_int,
-    idxStr: *const c_char,
-    argc: c_int,
-    argv: *mut *mut sqlite3_value,
+    _idxNum: c_int,
+    _idxStr: *const c_char,
+    _argc: c_int,
+    _argv: *mut *mut sqlite3_value,
 ) -> c_int {
     let pCur = cur as *mut marcvtab_cursor;
     (*pCur).iRowId = 1;
-    (*pCur).reader.as_mut().unwrap().advance();
-    return SQLITE_OK as i32;
+    if let Ok(_)=(*pCur).reader.as_mut().unwrap().advance() {
+    SQLITE_OK as c_int
+    } else {
+        SQLITE_ERROR as c_int
+    }
 }
 
 unsafe extern "C" fn marcvtabBestIndex(
-    tab: *mut sqlite3_vtab,
+    _tab: *mut sqlite3_vtab,
     pIdxInfo: *mut sqlite3_index_info,
 ) -> c_int {
     (*pIdxInfo).estimatedCost = 10.0;
@@ -337,7 +338,7 @@ pub static marcvtabModule: sqlite3_module = sqlite3_module {
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_extension_init(
     db: *mut sqlite3,
-    pzErrMsg: *mut *mut c_char,
+    _pzErrMsg: *mut *mut c_char,
     pApi: *const sqlite3_api_routines,
 ) -> c_int {
     sqlite3_api = pApi;
