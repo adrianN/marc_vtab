@@ -42,7 +42,7 @@ struct VtabArgs {
     fieldTypes: Vec<usize>,
 }
 
-fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
+fn readVtabArgs(args: Vec<&str>) -> Result<VtabArgs, &str> {
     let mut filename = None;
     let mut fieldTypes = None;
     for arg in &args {
@@ -56,12 +56,19 @@ fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
                 .and_then(|x| x.strip_prefix('\''))
                 .and_then(|x| x.strip_suffix('\''))
             {
-                fieldTypes = Some(
-                    fieldList
-                        .split(',')
-                        .map(|x| x.trim().parse::<usize>().expect("invalid field type"))
-                        .collect::<Vec<usize>>(),
-                );
+                let mut v = Vec::new();
+                for x in fieldList.split(',') {
+                    let t = x.trim();
+                    let u = t.parse::<usize>().map_err(|_| "Can't parse field type")?;
+                    v.push(u);
+                }
+                fieldTypes = Some(v);
+            //                fieldTypes = Some(
+            //                    fieldList
+            //                        .split(',')
+            //                        .map(|x| {x.trim().parse::<usize>()?})
+            //                        .collect::<Vec<usize>>(),
+            //                );
             } else {
                 unimplemented!();
             }
@@ -72,10 +79,10 @@ fn readVtabArgs(args: Vec<&str>) -> VtabArgs {
     //        .iter()
     //        .map(|x| x.parse::<usize>().expect("invalid field type"))
     //        .collect::<Vec<usize>>();
-    VtabArgs {
+    Ok(VtabArgs {
         filename: filename.unwrap().to_owned(),
         fieldTypes: fieldTypes.unwrap(),
-    }
+    })
 }
 
 fn createTableFromArgs(vtabArgs: &VtabArgs) -> String {
@@ -104,7 +111,11 @@ unsafe extern "C" fn marcvtabConnect(
                     .expect("expect valid str")
             })
             .collect();
-        vtabArgs = Some(readVtabArgs(arguments));
+        if let Ok(args) = readVtabArgs(arguments) {
+            vtabArgs = Some(args);
+        } else {
+            todo!();
+        }
     } else {
         unimplemented!();
     }
@@ -236,7 +247,9 @@ unsafe extern "C" fn marcvtabColumn(
         ((*sqlite3_api).result_int).unwrap()(ctx, record.header().record_length() as i32);
     } else if i == field_types.len() + 1 {
         let mut cur = Cursor::new(Vec::<u8>::new());
-        if record.to_marc21(&mut cur).is_err() { return SQLITE_ERROR as c_int }
+        if record.to_marc21(&mut cur).is_err() {
+            return SQLITE_ERROR as c_int;
+        }
         let buflen = cur.get_ref().len();
         ((*sqlite3_api).result_blob).unwrap()(
             ctx,
@@ -290,8 +303,8 @@ unsafe extern "C" fn marcvtabFilter(
 ) -> c_int {
     let pCur = cur as *mut marcvtab_cursor;
     (*pCur).iRowId = 1;
-    if let Ok(_)=(*pCur).reader.as_mut().unwrap().advance() {
-    SQLITE_OK as c_int
+    if let Ok(_) = (*pCur).reader.as_mut().unwrap().advance() {
+        SQLITE_OK as c_int
     } else {
         SQLITE_ERROR as c_int
     }
@@ -343,7 +356,11 @@ pub unsafe extern "C" fn sqlite3_extension_init(
 ) -> c_int {
     sqlite3_api = pApi;
     let s = std::ffi::CString::new("marcvtab").expect("Can't alloc string");
-    let rc =
-        (*sqlite3_api).create_module.unwrap()(db, s.as_ptr(), &marcvtabModule, std::ptr::null_mut());
+    let rc = (*sqlite3_api).create_module.unwrap()(
+        db,
+        s.as_ptr(),
+        &marcvtabModule,
+        std::ptr::null_mut(),
+    );
     return rc as c_int;
 }
